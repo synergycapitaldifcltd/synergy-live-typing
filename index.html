@@ -160,11 +160,18 @@
     "wss://broker.hivemq.com:8884/mqtt",
     "wss://broker.emqx.io:8084/mqtt"
   ];
-  var DEFAULT = { text: "", logo: false, gold: false, caret: true, scale: 1, at: 0 };
+  var DEFAULT = { text: "", logo: false, gold: false, caret: true, scale: 1 };
+  var FIELDS = ["text", "logo", "gold", "caret", "scale"];
 
   function $(id) { return document.getElementById(id); }
   function store(k, v) { try { localStorage.setItem("slt_" + k, v); } catch (e) {} }
   function recall(k) { try { return localStorage.getItem("slt_" + k); } catch (e) { return null; } }
+  function clean(s) {
+    var out = Object.assign({}, DEFAULT);
+    if (s && typeof s === "object") FIELDS.forEach(function (k) { if (k in s) out[k] = s[k]; });
+    out.text = String(out.text || ""); out.scale = Number(out.scale) || 1;
+    return out;
+  }
 
   // link format:  index.html#screen/CODE   or   index.html#type/CODE
   var parts = (location.hash || "").replace(/^#/, "").split("/");
@@ -176,27 +183,46 @@
     return Array.from(a, function (b) { return "abcdefghjkmnpqrstuvwxyz23456789"[b % 31]; }).join("");
   }
 
-  // ---------- transport ----------
-  function connectAll(topic, onState, onStatus) {
+  /* ---------- sync ----------
+     No device clocks are used. Each open page has a random id and numbers its own messages 1, 2, 3...
+     - A LIVE message (sent just now) is always shown; copies of it arriving via the second broker are
+       recognised by (id, number) and skipped.
+     - A STORED message is only used to fill a page that has just opened. A reply from a page that is
+       open right now beats the brokers' retained copies; between two retained copies the higher
+       revision wins (every page keeps its revision above anything it has seen).
+     - A page that opens says "hello"; open pages answer with what they show, so a newcomer catches up
+       even if a broker lost its stored copy. */
+  function makeSync(onLive, onStored, onHello, onStatus) {
+    var me = newCode(), seq = 0, rev = 0, seen = {};
+    var stateTopic = "synergy-live-typing/v2/" + code + "/state";
+    var helloTopic = "synergy-live-typing/v2/" + code + "/hello";
     var clients = BROKERS.map(function (url) {
-      var c = mqtt.connect(url, {
-        clientId: "slt_" + newCode(), clean: true, keepalive: 20, reconnectPeriod: 2000, connectTimeout: 8000
+      var c = mqtt.connect(url, { clientId: "slt_" + newCode(), clean: true, keepalive: 20, reconnectPeriod: 2000, connectTimeout: 8000 });
+      c.on("connect", function () {
+        c.subscribe([stateTopic, helloTopic], { qos: 1 }, function () { c.publish(helloTopic, JSON.stringify({ id: me }), { qos: 1 }); });
+        report();
       });
-      c.on("connect", function () { c.subscribe(topic, { qos: 1 }); report(); });
       c.on("close", report); c.on("offline", report); c.on("error", function () {});
-      c.on("message", function (t, payload) {
-        try { onState(JSON.parse(payload.toString())); } catch (e) {}
+      c.on("message", function (topic, payload, packet) {
+        var m; try { m = JSON.parse(payload.toString()); } catch (e) { return; }
+        if (!m || typeof m !== "object" || m.id === me) return;
+        if (topic === helloTopic) { onHello(); return; }
+        rev = Math.max(rev, Number(m.rev) || 0);
+        if (packet.retain || m.reply) { onStored(clean(m.state), Number(m.rev) || 0, !!m.reply); return; }
+        var key = m.id + ":" + m.seq;
+        if (seen[key]) return;                    // same message via the other broker
+        seen[key] = 1;
+        onLive(clean(m.state), m.id);
       });
       return c;
     });
-    function report() { onStatus(clients.filter(function (c) { return c.connected; }).length, clients.length); }
-    return {
-      publish: function (state) {
-        var body = JSON.stringify(state);
-        clients.forEach(function (c) { if (c.connected) c.publish(topic, body, { qos: 1, retain: true }); });
-      },
-      connected: function () { return clients.filter(function (c) { return c.connected; }).length; }
-    };
+    function count() { return clients.filter(function (c) { return c.connected; }).length; }
+    function report() { onStatus(count(), clients.length); }
+    function send(state, reply) {
+      var body = JSON.stringify({ id: me, seq: ++seq, rev: reply ? rev : ++rev, reply: !!reply, state: clean(state) });
+      clients.forEach(function (c) { if (c.connected) c.publish(stateTopic, body, { qos: 1, retain: !reply }); });
+    }
+    return { send: function (s) { send(s, false); }, reply: function (s) { send(s, true); }, count: count };
   }
 
   // ---------- setup (no code in the link) ----------
@@ -218,9 +244,15 @@
   }
 
   // ---------- big screen ----------
-  function startScreen(topic) {
+  function startScreen() {
     $("screen").hidden = false;
-    var last = null, shownAt = -1;
+    var last = null, live = false, storedRev = -1, gotReply = false;
+    function catchUp(r, isReply) {
+      if (live || (gotReply && !isReply)) return false;
+      if (isReply) { gotReply = true; storedRev = Math.max(storedRev, r); return true; }
+      if (r <= storedRev) return false;
+      storedRev = r; return true;
+    }
     function fit(el, box, scale) {
       var maxW = box.clientWidth, maxH = box.clientHeight;
       var lo = 12, hi = Math.max(24, innerHeight * 0.16 * scale), best = lo;
@@ -233,26 +265,24 @@
     }
     function render(s) {
       last = s;
-      var showLogo = s.logo || !String(s.text || "").trim();
+      var showLogo = s.logo || !s.text.trim();
       $("logoLayer").classList.toggle("gone", !showLogo);
       $("textLayer").classList.toggle("gone", showLogo);
       $("brand").style.opacity = showLogo ? 0 : .9;
       $("rule").style.opacity = showLogo ? 0 : 1;
       var t = $("text");
       t.classList.toggle("gold", !!s.gold);
-      t.textContent = String(s.text || "");
+      t.textContent = s.text;
       if (s.caret) { var c = document.createElement("span"); c.id = "caret"; t.appendChild(c); }
-      fit(t, $("box"), Number(s.scale) || 1);
+      fit(t, $("box"), s.scale);
     }
-    render(DEFAULT);
+    render(clean(DEFAULT));
     addEventListener("resize", function () { if (last) render(last); });
-    connectAll(topic, function (s) {
-      if (!s || typeof s !== "object") return;
-      var at = Number(s.at) || 0;
-      if (at <= shownAt) return;           // same update via the other broker, or an older one
-      shownAt = at;
-      render(Object.assign({}, DEFAULT, s));
-    }, function (n) { $("offline").hidden = n > 0; });
+    var sync = makeSync(
+      function (s) { live = true; render(s); },                                   // live: always show
+      function (s, r, isReply) { if (catchUp(r, isReply)) render(s); },          // stored: only to catch up
+      function () { if (last && (live || storedRev >= 0)) sync.reply(last); },      // newcomer: tell them
+      function (n) { $("offline").hidden = n > 0; });
 
     function fullscreen() {
       if (!document.fullscreenElement && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {});
@@ -266,27 +296,43 @@
   }
 
   // ---------- typing ----------
-  function startType(topic) {
+  function startType() {
     $("type").hidden = false;
     var input = $("input");
-    var screen = Object.assign({}, DEFAULT);
-    var hold = false, sendTimer = null, armTimer = null, lastSent = 0;
-    var link = connectAll(topic, function (s) {
-      // adopt the screen's current state (e.g. this page reopened); never roll back a newer local edit
-      if (s && (Number(s.at) || 0) > (screen.at || 0)) { screen = Object.assign({}, DEFAULT, s); ui(); }
-    }, function (n, total) {
-      $("dot").className = "dot" + (n === total ? " ok" : n > 0 ? " half" : "");
-      $("connText").textContent = n === 0 ? "Not connected — retrying" : n === total ? "Connected" : "Connected (backup link down)";
-      if (n > 0 && screen.at) link.publish(screen);   // re-send the latest after a reconnect
-    });
+    var screen = clean(DEFAULT);            // what the big screen shows
+    var othersAt = 0, hold = false, sendTimer = null, armTimer = null, resendTimer = null, lastSent = 0, lastKey = 0, live = false, storedRev = -1, gotReply = false;
+    function catchUp(r, isReply) {
+      if (live || lastSent || (gotReply && !isReply)) return false;
+      if (isReply) { gotReply = true; storedRev = Math.max(storedRev, r); return true; }
+      if (r <= storedRev) return false;
+      storedRev = r; return true;
+    }
+
+    // show what is on screen in the box, unless this person is holding a draft or typing right now
+    function follow(s) {
+      screen = s;
+      if (!hold && Date.now() - lastKey > 1500) input.value = s.text;
+      ui();
+    }
+    var sync = makeSync(
+      function (s) { live = true; othersAt = Date.now(); follow(s); setTimeout(ui, 2600); },
+      function (s, r, isReply) { if (catchUp(r, isReply)) follow(s); },
+      function () { if (live || storedRev >= 0 || lastSent) sync.reply(screen); },
+      function (n) {
+        $("dot").className = "dot" + (n > 0 ? " ok" : "");
+        $("connText").textContent = n > 0 ? "Connected" : "Not connected — retrying";
+        // after a reconnect, re-send what should be on screen (once the stored copies have arrived)
+        clearTimeout(resendTimer);
+        if (n > 0 && lastSent) resendTimer = setTimeout(function () { sync.send(screen); }, 1500);
+      });
 
     function publish(patch) {
-      screen = Object.assign({}, screen, patch, { at: Math.max(Date.now(), (screen.at || 0) + 1) });
+      screen = Object.assign({}, screen, patch);
       ui();
-      // send at most ~8 times a second while typing; always send the final state
+      // at most ~8 messages a second while typing; the final state is always sent
       clearTimeout(sendTimer);
       var wait = Math.max(0, 120 - (Date.now() - lastSent));
-      sendTimer = setTimeout(function () { lastSent = Date.now(); link.publish(screen); }, wait);
+      sendTimer = setTimeout(function () { lastSent = Date.now(); sync.send(screen); }, wait);
     }
 
     function ui() {
@@ -297,17 +343,18 @@
       $("logoBtn").classList.toggle("on", !!screen.logo);
       $("goldBtn").classList.toggle("on", !!screen.gold);
       $("caretBtn").classList.toggle("on", !!screen.caret);
-      var pending = input.value !== (screen.text || "");
+      var pending = input.value !== screen.text;
       $("showBtn").disabled = !(hold && pending) && !screen.logo;
       $("showBtn").firstChild.textContent = screen.logo ? "Show text" : "Show";
-      var now = screen.logo ? "the logo" : ((screen.text || "").trim() ? "“" + screen.text.replace(/\s+/g, " ").slice(-80) + "”" : "the logo (no text yet)");
+      var now = screen.logo ? "the logo" : (screen.text.trim() ? "“" + screen.text.replace(/\s+/g, " ").slice(-80) + "”" : "the logo (no text yet)");
       var el = $("now"); el.textContent = "On screen now: ";
       var b = document.createElement("b"); b.textContent = now; el.appendChild(b);
       if (hold && pending) { var w = document.createElement("span"); w.className = "warn"; w.textContent = " · new text not shown yet"; el.appendChild(w); }
+      if (Date.now() - othersAt < 2500) { var o = document.createElement("span"); o.className = "warn"; o.textContent = " · someone else is typing"; el.appendChild(o); }
     }
 
     input.addEventListener("input", function () {
-      store("draft_" + code, input.value);
+      lastKey = Date.now();
       if (!hold) publish({ text: input.value }); else ui();
     });
 
@@ -324,12 +371,12 @@
           return;
         }
         b.classList.remove("armed"); b.firstChild.textContent = "Clear";
-        input.value = ""; store("draft_" + code, ""); publish({ text: "", logo: false });
+        input.value = ""; publish({ text: "", logo: false });
       }
       if (name === "gold") publish({ gold: !screen.gold });
       if (name === "caret") publish({ caret: !screen.caret });
-      if (name === "smaller") publish({ scale: Math.max(0.4, Math.round(((screen.scale || 1) - 0.1) * 10) / 10) });
-      if (name === "bigger") publish({ scale: Math.min(1.6, Math.round(((screen.scale || 1) + 0.1) * 10) / 10) });
+      if (name === "smaller") publish({ scale: Math.max(0.4, Math.round((screen.scale - 0.1) * 10) / 10) });
+      if (name === "bigger") publish({ scale: Math.min(1.6, Math.round((screen.scale + 0.1) * 10) / 10) });
       ui();
     }
     [["holdBtn", "hold"], ["showBtn", "show"], ["logoBtn", "logo"], ["clearBtn", "clear"], ["goldBtn", "gold"],
@@ -344,15 +391,12 @@
       var map = { KeyH: "hold", KeyL: "logo", KeyK: "clear" };
       if (e.altKey && !mod && map[e.code]) { e.preventDefault(); act(map[e.code]); }
     });
-
-    input.value = recall("draft_" + code) || "";
     ui();
   }
 
   if (typeof mqtt === "undefined") { document.body.textContent = "Could not load the page files. Check the internet connection and reload."; return; }
-  var topic = "synergy-live-typing/v1/" + code + "/state";
-  if (mode === "screen" && code) startScreen(topic);
-  else if (mode === "type" && code) startType(topic);
+  if (mode === "screen" && code) startScreen();
+  else if (mode === "type" && code) startType();
   else startSetup();
 })();
 </script>
