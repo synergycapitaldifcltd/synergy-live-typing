@@ -1,0 +1,356 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="robots" content="noindex, nofollow">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Synergy Live Typing</title>
+<style>
+  :root {
+    --navy: #0c1631; --navy-deep: #070d1f; --navy-lift: #223462; --panel: #131f3f; --line: #263559;
+    --ink: #ffffff; --text: #e9edf6; --muted: #93a0bd; --gold: #f28c28; --gold-soft: #ffc46e;
+    --live: #2fbf71; --hold: #e0a526; --bad: #e5484d;
+    --face: "Avenir Next", "Helvetica Neue", "Segoe UI", Arial, sans-serif;
+    --mono: ui-monospace, Menlo, Consolas, monospace;
+    color-scheme: dark;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--navy); color: var(--text); font: 16px/1.4 var(--face); }
+  [hidden] { display: none !important; }
+
+  /* ---------- setup ---------- */
+  #setup { min-height: 100%; display: flex; align-items: center; justify-content: center; padding: 24px 16px; }
+  #setup .card { display: flex; flex-direction: column; gap: 14px; width: min(560px, 100%); }
+  #setup img { width: 180px; max-width: 50%; }
+  #setup h1 { margin: 0; font-size: 18px; letter-spacing: .06em; }
+  #setup h1 span { color: var(--gold); }
+  #setup p { margin: 0; color: var(--muted); font-size: 14px; }
+  .linkrow { display: flex; flex-direction: column; gap: 6px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 12px; }
+  .linkrow b { font-size: 14px; }
+  .linkrow code { font: 13px var(--mono); color: var(--gold-soft); overflow-wrap: anywhere; user-select: all; }
+  .linkrow .row { display: flex; gap: 8px; flex-wrap: wrap; }
+  .btn { min-height: 44px; border-radius: 10px; font: 600 15px var(--face); cursor: pointer; border: 1px solid var(--line);
+         background: var(--panel); color: var(--text); padding: 0 14px; text-decoration: none; display: inline-flex; align-items: center; justify-content: center; }
+  .btn.primary { background: var(--gold); border-color: var(--gold); color: #1d1000; }
+  .btn:focus-visible, button:focus-visible { outline: 2px solid var(--gold-soft); outline-offset: 2px; }
+
+  /* ---------- big screen ---------- */
+  #screen { position: fixed; inset: 0; overflow: hidden; cursor: none;
+            background: radial-gradient(ellipse at 50% 45%, var(--navy-lift) 0%, var(--navy) 62%, var(--navy-deep) 100%); }
+  .layer { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; transition: opacity .6s ease; }
+  .gone { opacity: 0; pointer-events: none; }
+  #brand { position: absolute; left: 50%; bottom: 4.5vh; transform: translateX(-50%); height: 5.2vh; transition: opacity .6s; }
+  #rule { position: absolute; left: 50%; bottom: 11.5vh; width: 14vw; height: 2px; transform: translateX(-50%);
+          background: linear-gradient(90deg, transparent, var(--gold), transparent); transition: opacity .6s; }
+  #box { width: 86vw; height: 68vh; margin-top: -6vh; display: flex; align-items: center; justify-content: center; }
+  #text { white-space: pre-wrap; overflow-wrap: break-word; text-align: center; font-weight: 600; line-height: 1.22;
+          color: var(--ink); text-shadow: 0 .04em .25em rgba(0, 0, 0, .45); max-width: 100%; }
+  #text.gold { background: linear-gradient(180deg, var(--gold-soft) 0%, #ec781c 100%); -webkit-background-clip: text; background-clip: text;
+               color: transparent; text-shadow: none; filter: drop-shadow(0 .03em .12em rgba(0, 0, 0, .5)); }
+  #caret { display: inline-block; width: .06em; height: .95em; margin-left: .06em; vertical-align: -.1em; background: var(--gold);
+           animation: blink 1.05s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { #caret { animation: none; } .layer, #brand, #rule { transition: none; } }
+  #logoLayer img { width: 42vw; max-width: 900px; }
+  #logoLayer .tag { position: absolute; top: 72vh; left: 0; right: 0; text-align: center; font-size: 2.6vh; letter-spacing: .35em;
+                    color: var(--gold-soft); font-weight: 600; }
+  #hint { position: absolute; left: 0; right: 0; top: 2vh; text-align: center; font-size: 1.6vh; color: rgba(255, 255, 255, .5); transition: opacity 1s; }
+  /* operator-only: a small dot shows only while BOTH links are down */
+  #offline { position: absolute; right: 1.2vh; top: 1.2vh; width: 1vh; height: 1vh; border-radius: 50%; background: var(--bad); }
+
+  /* ---------- type (controller) ---------- */
+  #type { height: 100%; }
+  .app { display: flex; flex-direction: column; gap: 10px; height: 100%; max-width: 1100px; margin: 0 auto;
+         padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom)); }
+  .top { display: flex; align-items: center; gap: 10px; }
+  .top h1 { font-size: 15px; margin: 0; letter-spacing: .06em; font-weight: 700; }
+  .top h1 span { color: var(--gold); }
+  .spacer { flex: 1; }
+  .pill { padding: 4px 10px; border-radius: 999px; font-weight: 700; font-size: 12px; letter-spacing: .08em; }
+  .pill.live { background: var(--live); color: #04140b; }
+  .pill.hold { background: var(--hold); color: #1d1300; }
+  .conn { font-size: 12px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--bad); flex: none; }
+  .dot.ok { background: var(--live); }
+  .dot.half { background: var(--hold); }
+  #input { flex: 1; min-height: 120px; width: 100%; resize: none; background: var(--navy-deep); color: var(--ink); border: 1px solid var(--line);
+           border-radius: 12px; padding: 14px; font: 24px/1.35 var(--face); outline: none; }
+  #input:focus { border-color: var(--gold); }
+  .bar { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
+  .bar button { min-height: 48px; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 10px;
+                font: 600 15px var(--face); cursor: pointer; padding: 0 6px; }
+  .bar button.on { border-color: var(--gold); color: var(--gold-soft); }
+  .bar button.show { background: var(--gold); border-color: var(--gold); color: #1d1000; }
+  .bar button.show:disabled { opacity: .45; cursor: default; }
+  .bar button.armed { background: var(--bad); border-color: var(--bad); color: #fff; }
+  kbd { display: none; }
+  @media (hover: hover) and (pointer: fine) { kbd { display: inline; font: 11px var(--mono); color: var(--muted); margin-left: 4px; } }
+  .now { font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .now b { color: var(--text); font-weight: 600; }
+  .now .warn { color: var(--hold); }
+</style>
+</head>
+<body>
+
+<div id="setup" hidden>
+  <div class="card">
+    <img src="logo.png" alt="Synergy Capital">
+    <h1>SYNERGY <span>LIVE TYPING</span></h1>
+    <p>Two links for this event. Keep them private: anyone with the typing link can write on the screen.</p>
+    <div class="linkrow">
+      <b>Big screen: open on the laptop connected to the projector</b>
+      <code id="screenLink"></code>
+      <div class="row"><a class="btn" id="openScreen">Open big screen</a><button class="btn" data-copy="screenLink" type="button">Copy link</button></div>
+    </div>
+    <div class="linkrow">
+      <b>Typing: open on the phone, iPad or laptop at the seat</b>
+      <code id="typeLink"></code>
+      <div class="row"><a class="btn primary" id="openType">Open typing</a><button class="btn" data-copy="typeLink" type="button">Copy link</button></div>
+    </div>
+    <p>No sign-in needed. Both devices just need internet (Wi-Fi or mobile data); they don't have to be on the same network.</p>
+  </div>
+</div>
+
+<div id="screen" hidden>
+  <div id="logoLayer" class="layer"><img src="logo.png" alt="Synergy Capital"><div class="tag">TEN YEARS STRONG &nbsp;·&nbsp; 2015 – 2016 – 2026</div></div>
+  <div id="textLayer" class="layer gone"><div id="box"><div id="text"></div></div></div>
+  <div id="rule"></div>
+  <img id="brand" src="logo.png" alt="">
+  <div id="offline"></div>
+  <div id="hint">Click once for full screen</div>
+</div>
+
+<div id="type" hidden>
+  <div class="app">
+    <div class="top">
+      <h1>SYNERGY <span>LIVE</span></h1>
+      <span id="modePill" class="pill live">LIVE</span>
+      <span class="spacer"></span>
+      <span class="conn"><span class="dot" id="dot"></span><span id="connText">Connecting…</span></span>
+    </div>
+    <textarea id="input" spellcheck="true" placeholder="Type here — it appears on the big screen." aria-label="Text for the big screen"></textarea>
+    <div class="now" id="now"></div>
+    <div class="bar">
+      <button id="holdBtn" type="button">Hold<kbd>⌥H</kbd></button>
+      <button id="showBtn" type="button" class="show">Show<kbd>⌘↵</kbd></button>
+      <button id="logoBtn" type="button">Logo<kbd>⌥L</kbd></button>
+      <button id="clearBtn" type="button">Clear<kbd>⌥K</kbd></button>
+    </div>
+    <div class="bar">
+      <button id="goldBtn" type="button">Gold</button>
+      <button id="caretBtn" type="button">Cursor</button>
+      <button id="smaller" type="button">A−</button>
+      <button id="bigger" type="button">A+</button>
+    </div>
+  </div>
+</div>
+
+<script src="vendor/mqtt.min.js"></script>
+<script>
+(function () {
+  // Two independent public MQTT brokers over secure WebSockets: every update goes through both,
+  // so the screen keeps working if one of them is slow, down or blocked by the venue network.
+  var BROKERS = [
+    "wss://broker.hivemq.com:8884/mqtt",
+    "wss://broker.emqx.io:8084/mqtt"
+  ];
+  var DEFAULT = { text: "", logo: false, gold: false, caret: true, scale: 1, at: 0 };
+
+  function $(id) { return document.getElementById(id); }
+  function store(k, v) { try { localStorage.setItem("slt_" + k, v); } catch (e) {} }
+  function recall(k) { try { return localStorage.getItem("slt_" + k); } catch (e) { return null; } }
+
+  // link format:  index.html#screen/CODE   or   index.html#type/CODE
+  var parts = (location.hash || "").replace(/^#/, "").split("/");
+  var mode = parts[0], code = (parts[1] || "").replace(/[^A-Za-z0-9]/g, "");
+
+  function base() { return location.href.split("#")[0]; }
+  function newCode() {
+    var a = new Uint8Array(12); crypto.getRandomValues(a);
+    return Array.from(a, function (b) { return "abcdefghjkmnpqrstuvwxyz23456789"[b % 31]; }).join("");
+  }
+
+  // ---------- transport ----------
+  function connectAll(topic, onState, onStatus) {
+    var clients = BROKERS.map(function (url) {
+      var c = mqtt.connect(url, {
+        clientId: "slt_" + newCode(), clean: true, keepalive: 20, reconnectPeriod: 2000, connectTimeout: 8000
+      });
+      c.on("connect", function () { c.subscribe(topic, { qos: 1 }); report(); });
+      c.on("close", report); c.on("offline", report); c.on("error", function () {});
+      c.on("message", function (t, payload) {
+        try { onState(JSON.parse(payload.toString())); } catch (e) {}
+      });
+      return c;
+    });
+    function report() { onStatus(clients.filter(function (c) { return c.connected; }).length, clients.length); }
+    return {
+      publish: function (state) {
+        var body = JSON.stringify(state);
+        clients.forEach(function (c) { if (c.connected) c.publish(topic, body, { qos: 1, retain: true }); });
+      },
+      connected: function () { return clients.filter(function (c) { return c.connected; }).length; }
+    };
+  }
+
+  // ---------- setup (no code in the link) ----------
+  function startSetup() {
+    var c = recall("code") || newCode(); store("code", c);
+    var s = base() + "#screen/" + c, t = base() + "#type/" + c;
+    $("setup").hidden = false;
+    $("screenLink").textContent = s; $("typeLink").textContent = t;
+    $("openScreen").href = s; $("openType").href = t;
+    document.querySelectorAll("[data-copy]").forEach(function (b) {
+      b.addEventListener("click", function () {
+        var txt = $(b.getAttribute("data-copy")).textContent;
+        (navigator.clipboard ? navigator.clipboard.writeText(txt) : Promise.reject()).then(function () {
+          b.textContent = "Copied"; setTimeout(function () { b.textContent = "Copy link"; }, 1500);
+        }, function () {});
+      });
+    });
+    addEventListener("hashchange", function () { location.reload(); });
+  }
+
+  // ---------- big screen ----------
+  function startScreen(topic) {
+    $("screen").hidden = false;
+    var last = null, shownAt = -1;
+    function fit(el, box, scale) {
+      var maxW = box.clientWidth, maxH = box.clientHeight;
+      var lo = 12, hi = Math.max(24, innerHeight * 0.16 * scale), best = lo;
+      for (var i = 0; i < 18; i++) {
+        var mid = (lo + hi) / 2;
+        el.style.fontSize = mid + "px";
+        if (el.scrollWidth <= maxW + 1 && el.scrollHeight <= maxH + 1) { best = mid; lo = mid; } else { hi = mid; }
+      }
+      el.style.fontSize = best + "px";
+    }
+    function render(s) {
+      last = s;
+      var showLogo = s.logo || !String(s.text || "").trim();
+      $("logoLayer").classList.toggle("gone", !showLogo);
+      $("textLayer").classList.toggle("gone", showLogo);
+      $("brand").style.opacity = showLogo ? 0 : .9;
+      $("rule").style.opacity = showLogo ? 0 : 1;
+      var t = $("text");
+      t.classList.toggle("gold", !!s.gold);
+      t.textContent = String(s.text || "");
+      if (s.caret) { var c = document.createElement("span"); c.id = "caret"; t.appendChild(c); }
+      fit(t, $("box"), Number(s.scale) || 1);
+    }
+    render(DEFAULT);
+    addEventListener("resize", function () { if (last) render(last); });
+    connectAll(topic, function (s) {
+      if (!s || typeof s !== "object") return;
+      var at = Number(s.at) || 0;
+      if (at <= shownAt) return;           // same update via the other broker, or an older one
+      shownAt = at;
+      render(Object.assign({}, DEFAULT, s));
+    }, function (n) { $("offline").hidden = n > 0; });
+
+    function fullscreen() {
+      if (!document.fullscreenElement && document.documentElement.requestFullscreen) document.documentElement.requestFullscreen().catch(function () {});
+    }
+    $("screen").addEventListener("click", fullscreen);
+    addEventListener("keydown", function (e) { if (e.key === "f" || e.key === "F") fullscreen(); });
+    document.addEventListener("fullscreenchange", function () { $("hint").style.opacity = document.fullscreenElement ? 0 : 1; });
+    setTimeout(function () { $("hint").style.opacity = 0; }, 15000);
+    function wake() { if (navigator.wakeLock) navigator.wakeLock.request("screen").catch(function () {}); }
+    wake(); document.addEventListener("visibilitychange", function () { if (!document.hidden) wake(); });
+  }
+
+  // ---------- typing ----------
+  function startType(topic) {
+    $("type").hidden = false;
+    var input = $("input");
+    var screen = Object.assign({}, DEFAULT);
+    var hold = false, sendTimer = null, armTimer = null, lastSent = 0;
+    var link = connectAll(topic, function (s) {
+      // adopt the screen's current state (e.g. this page reopened); never roll back a newer local edit
+      if (s && (Number(s.at) || 0) > (screen.at || 0)) { screen = Object.assign({}, DEFAULT, s); ui(); }
+    }, function (n, total) {
+      $("dot").className = "dot" + (n === total ? " ok" : n > 0 ? " half" : "");
+      $("connText").textContent = n === 0 ? "Not connected — retrying" : n === total ? "Connected" : "Connected (backup link down)";
+      if (n > 0 && screen.at) link.publish(screen);   // re-send the latest after a reconnect
+    });
+
+    function publish(patch) {
+      screen = Object.assign({}, screen, patch, { at: Math.max(Date.now(), (screen.at || 0) + 1) });
+      ui();
+      // send at most ~8 times a second while typing; always send the final state
+      clearTimeout(sendTimer);
+      var wait = Math.max(0, 120 - (Date.now() - lastSent));
+      sendTimer = setTimeout(function () { lastSent = Date.now(); link.publish(screen); }, wait);
+    }
+
+    function ui() {
+      var pill = $("modePill");
+      pill.textContent = screen.logo ? "LOGO" : hold ? "HOLD" : "LIVE";
+      pill.className = "pill " + (hold || screen.logo ? "hold" : "live");
+      $("holdBtn").classList.toggle("on", hold);
+      $("logoBtn").classList.toggle("on", !!screen.logo);
+      $("goldBtn").classList.toggle("on", !!screen.gold);
+      $("caretBtn").classList.toggle("on", !!screen.caret);
+      var pending = input.value !== (screen.text || "");
+      $("showBtn").disabled = !(hold && pending) && !screen.logo;
+      $("showBtn").firstChild.textContent = screen.logo ? "Show text" : "Show";
+      var now = screen.logo ? "the logo" : ((screen.text || "").trim() ? "“" + screen.text.replace(/\s+/g, " ").slice(-80) + "”" : "the logo (no text yet)");
+      var el = $("now"); el.textContent = "On screen now: ";
+      var b = document.createElement("b"); b.textContent = now; el.appendChild(b);
+      if (hold && pending) { var w = document.createElement("span"); w.className = "warn"; w.textContent = " · new text not shown yet"; el.appendChild(w); }
+    }
+
+    input.addEventListener("input", function () {
+      store("draft_" + code, input.value);
+      if (!hold) publish({ text: input.value }); else ui();
+    });
+
+    function act(name) {
+      if (name === "hold") { hold = !hold; if (!hold) publish({ text: input.value }); }
+      if (name === "show") publish({ text: input.value, logo: false });
+      if (name === "logo") publish({ logo: !screen.logo });
+      if (name === "clear") {
+        var b = $("clearBtn");
+        if (!b.classList.contains("armed")) {     // two taps, so a stray tap can't wipe the screen
+          b.classList.add("armed"); b.firstChild.textContent = "Tap again";
+          clearTimeout(armTimer);
+          armTimer = setTimeout(function () { b.classList.remove("armed"); b.firstChild.textContent = "Clear"; }, 2500);
+          return;
+        }
+        b.classList.remove("armed"); b.firstChild.textContent = "Clear";
+        input.value = ""; store("draft_" + code, ""); publish({ text: "", logo: false });
+      }
+      if (name === "gold") publish({ gold: !screen.gold });
+      if (name === "caret") publish({ caret: !screen.caret });
+      if (name === "smaller") publish({ scale: Math.max(0.4, Math.round(((screen.scale || 1) - 0.1) * 10) / 10) });
+      if (name === "bigger") publish({ scale: Math.min(1.6, Math.round(((screen.scale || 1) + 0.1) * 10) / 10) });
+      ui();
+    }
+    [["holdBtn", "hold"], ["showBtn", "show"], ["logoBtn", "logo"], ["clearBtn", "clear"], ["goldBtn", "gold"],
+     ["caretBtn", "caret"], ["smaller", "smaller"], ["bigger", "bigger"]].forEach(function (p) {
+      var b = $(p[0]);
+      b.addEventListener("mousedown", function (e) { e.preventDefault(); });   // keep the phone keyboard open
+      b.addEventListener("click", function () { act(p[1]); });
+    });
+    addEventListener("keydown", function (e) {
+      var mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key === "Enter") { e.preventDefault(); act("show"); return; }
+      var map = { KeyH: "hold", KeyL: "logo", KeyK: "clear" };
+      if (e.altKey && !mod && map[e.code]) { e.preventDefault(); act(map[e.code]); }
+    });
+
+    input.value = recall("draft_" + code) || "";
+    ui();
+  }
+
+  if (typeof mqtt === "undefined") { document.body.textContent = "Could not load the page files. Check the internet connection and reload."; return; }
+  var topic = "synergy-live-typing/v1/" + code + "/state";
+  if (mode === "screen" && code) startScreen(topic);
+  else if (mode === "type" && code) startType(topic);
+  else startSetup();
+})();
+</script>
+</body>
+</html>
