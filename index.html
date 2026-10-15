@@ -53,9 +53,11 @@
            animation: blink 1.05s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { #caret { animation: none; } .layer, #brand, #rule { transition: none; } }
-  #logoLayer img { width: 42vw; max-width: 900px; }
-  #logoLayer .tag { position: absolute; top: 72vh; left: 0; right: 0; text-align: center; font-size: 2.6vh; letter-spacing: .35em;
-                    color: var(--gold-soft); font-weight: 600; }
+  /* logo and year line stack as one group, sized by whichever screen side is tighter, so they never overlap */
+  #logoLayer { flex-direction: column; gap: 6vh; }
+  #logoLayer img { width: min(42vw, 66vh); max-width: 900px; }
+  #logoLayer .tag { font-size: min(2.6vh, 1.45vw); letter-spacing: .35em; margin-right: -.35em; padding-inline: 16px;
+                    text-align: center; color: var(--gold-soft); font-weight: 600; white-space: nowrap; }
   #hint { position: absolute; left: 0; right: 0; top: 2vh; text-align: center; font-size: 1.6vh; color: rgba(255, 255, 255, .5); transition: opacity 1s; }
   /* operator-only: a small dot shows only while BOTH links are down */
   #offline { position: absolute; right: 1.2vh; top: 1.2vh; width: 1vh; height: 1vh; border-radius: 50%; background: var(--bad); }
