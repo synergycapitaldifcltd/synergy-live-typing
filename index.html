@@ -56,8 +56,10 @@
   /* logo and year line stack as one group, sized by whichever screen side is tighter, so they never overlap */
   #logoLayer { flex-direction: column; gap: 6vh; }
   #logoLayer img { width: min(42vw, 66vh); max-width: 900px; }
-  #logoLayer .tag { font-size: min(2.6vh, 1.45vw); letter-spacing: .35em; margin-right: -.35em; padding-inline: 16px;
-                    text-align: center; color: var(--gold-soft); font-weight: 600; white-space: nowrap; }
+  #logoLayer .tag { display: flex; flex-direction: column; align-items: center; gap: 1.4vh; padding-inline: 16px;
+                    color: var(--gold-soft); font-weight: 600; white-space: nowrap; }
+  #logoLayer .tag span { font-size: min(2.8vh, 1.9vw); letter-spacing: .35em; margin-right: -.35em; }
+  #logoLayer .tag .years { font-size: min(2.3vh, 1.6vw); letter-spacing: .28em; margin-right: -.28em; opacity: .85; }
   #hint { position: absolute; left: 0; right: 0; top: 2vh; text-align: center; font-size: 1.6vh; color: rgba(255, 255, 255, .5); transition: opacity 1s; }
   /* operator-only: a small dot shows only while BOTH links are down */
   #offline { position: absolute; right: 1.2vh; top: 1.2vh; width: 1vh; height: 1vh; border-radius: 50%; background: var(--bad); }
@@ -116,7 +118,7 @@
 </div>
 
 <div id="screen" hidden>
-  <div id="logoLayer" class="layer"><img src="logo.png" alt="Synergy Capital"><div class="tag">TEN YEARS STRONG &nbsp;·&nbsp; 2015 – 2016 – 2026</div></div>
+  <div id="logoLayer" class="layer"><img src="logo.png" alt="Synergy Capital"><div class="tag"><span>TEN YEARS STRONG</span><span class="years">2015 – 2016 – 2026</span></div></div>
   <div id="textLayer" class="layer gone"><div id="box"><div id="text"></div></div></div>
   <div id="rule"></div>
   <img id="brand" src="logo.png" alt="">
